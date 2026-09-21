@@ -159,6 +159,30 @@ def load_day14_data():
 # ---------------------------------------------------------------------
 
 def normalize_incidents(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Normalize the actual Day 14 incident schema into the internal
+    Day 15 schema.
+
+    Day 14 input fields:
+        max_priority_score
+        max_prediction_probability
+        max_dynamic_risk
+        cross_camera_event
+        incident_explanation
+
+    Day 15 internal fields:
+        max_priority
+        max_prediction_probability
+        max_dynamic_risk
+        cross_camera
+        original_explanation
+    """
+
+    df = df.copy()
+
+    # ------------------------------------------------------------
+    # Day 14 input columns
+    # ------------------------------------------------------------
 
     defaults = {
         "incident_id": "",
@@ -169,37 +193,47 @@ def normalize_incidents(df: pd.DataFrame) -> pd.DataFrame:
         "end_frame": 0,
         "duration_frames": 0,
         "supporting_alert_count": 0,
-        "max_priority": 0.0,
+        "max_priority_score": 0.0,
         "max_prediction_probability": 0.0,
         "max_dynamic_risk": 0.0,
         "alert_level": "LOW",
         "priority_level": "NORMAL",
         "temporal_states": "",
         "lifecycle_state": "RESOLVED",
-        "cross_camera": False,
-        "explanation": "",
+        "cross_camera_event": False,
+        "incident_explanation": "",
         "recommended_action": "",
-        "queue_position": 0,
+        "first_queue_position": 0,
+        "incident_queue_position": 0,
     }
 
     df = ensure_columns(df, defaults)
+
+    # ------------------------------------------------------------
+    # Numeric Day 14 fields
+    # ------------------------------------------------------------
 
     numeric_columns = [
         "start_frame",
         "end_frame",
         "duration_frames",
         "supporting_alert_count",
-        "max_priority",
+        "max_priority_score",
         "max_prediction_probability",
         "max_dynamic_risk",
-        "queue_position",
+        "first_queue_position",
+        "incident_queue_position",
     ]
 
     for column in numeric_columns:
         df[column] = pd.to_numeric(
             df[column],
-            errors="coerce"
+            errors="coerce",
         ).fillna(0)
+
+    # ------------------------------------------------------------
+    # Text Day 14 fields
+    # ------------------------------------------------------------
 
     text_columns = [
         "incident_id",
@@ -210,14 +244,32 @@ def normalize_incidents(df: pd.DataFrame) -> pd.DataFrame:
         "priority_level",
         "temporal_states",
         "lifecycle_state",
-        "explanation",
+        "incident_explanation",
         "recommended_action",
     ]
 
     for column in text_columns:
         df[column] = df[column].map(safe_text)
 
-    df["cross_camera"] = df["cross_camera"].map(normalize_bool)
+    # ------------------------------------------------------------
+    # Boolean Day 14 field
+    # ------------------------------------------------------------
+
+    df["cross_camera_event"] = (
+        df["cross_camera_event"].map(normalize_bool)
+    )
+
+    # ------------------------------------------------------------
+    # Create Day 15 normalized internal fields
+    # ------------------------------------------------------------
+
+    df["max_priority"] = df["max_priority_score"]
+
+    df["cross_camera"] = df["cross_camera_event"]
+
+    df["original_explanation"] = (
+        df["incident_explanation"]
+    )
 
     return df
 
@@ -227,7 +279,7 @@ def normalize_incidents(df: pd.DataFrame) -> pd.DataFrame:
 # ---------------------------------------------------------------------
 
 def build_priority_evidence(row):
-    priority = safe_float(row["max_priority"])
+    priority = safe_float(row["max_priority_score"])
     priority_level = safe_text(row["priority_level"], "NORMAL")
 
     reasons = []
@@ -261,7 +313,7 @@ def build_priority_evidence(row):
             f"{priority_level} priority classification"
         )
 
-    if normalize_bool(row["cross_camera"]):
+    if normalize_bool(row["cross_camera_event"]):
         reasons.append(
             "cross-camera correlation available"
         )
@@ -316,7 +368,7 @@ def build_camera_evidence(row):
         "SINGLE-CAMERA"
     )
 
-    if normalize_bool(row["cross_camera"]):
+    if normalize_bool(row["cross_camera_event"]):
         return (
             f"cross-camera path observed: {camera_path}; "
             "camera correlation is based on the Day 12 development "
@@ -349,7 +401,7 @@ def determine_operator_action(row):
         "LOW"
     ).upper()
 
-    cross_camera = normalize_bool(row["cross_camera"])
+    cross_camera = normalize_bool(row["cross_camera_event"])
 
     if lifecycle == "ACTIVE" or priority in {"IMMEDIATE", "URGENT"}:
         return (
@@ -422,7 +474,7 @@ def build_audit_records(incidents):
             "supporting_alert_count": safe_int(
                 row["supporting_alert_count"]
             ),
-            "max_priority": safe_float(row["max_priority"]),
+            "max_priority": safe_float(row["max_priority_score"]),
             "max_prediction_probability": safe_float(
                 row["max_prediction_probability"]
             ),
@@ -442,14 +494,14 @@ def build_audit_records(incidents):
             ),
             "lifecycle_state": lifecycle,
             "cross_camera": normalize_bool(
-                row["cross_camera"]
+                row["cross_camera_event"]
             ),
             "priority_evidence": build_priority_evidence(row),
             "risk_evidence": build_risk_evidence(row),
             "temporal_evidence": build_temporal_evidence(row),
             "camera_evidence": build_camera_evidence(row),
             "original_explanation": safe_text(
-                row["explanation"]
+                row["incident_explanation"]
             ),
             "operator_action": determine_operator_action(row),
             "audit_status": (
@@ -652,7 +704,7 @@ def build_summary(audit_df):
     })
 
     rows.append({
-        "metric": "max_priority",
+        "metric": "max_priority_score",
         "value": round(
             audit_df["max_priority"].max(),
             4,
