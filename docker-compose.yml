@@ -1,0 +1,53 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: borderai_postgres
+    restart: always
+    environment:
+      POSTGRES_DB: borderai
+      POSTGRES_USER: borderai
+      POSTGRES_PASSWORD: borderai_secret
+    ports:
+      - "5432:5432"
+    volumes:
+      - ./backend/init.sql:/docker-entrypoint-initdb.d/init.sql
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U borderai -d borderai" ]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: borderai_backend
+    restart: always
+    ports:
+      - "8001:8000"
+    environment:
+      - DB_HOST=postgres
+      - DB_PORT=5432
+      - DB_NAME=borderai
+      - DB_USER=borderai
+      - DB_PASSWORD=borderai_secret
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: borderai_frontend
+    restart: always
+    ports:
+      - "5174:5173"
+    environment:
+      - VITE_API_URL=http://localhost:8001
+    depends_on:
+      - backend
+
+volumes:
+  postgres_data:
